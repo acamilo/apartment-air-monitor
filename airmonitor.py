@@ -20,7 +20,119 @@ import adafruit_scd4x
 
 class AirMonitor:
     secrets = None
+    name = None
+    i2c = None
+    pm25 = None
     def __init__(self,secrets,name="ESP32"):
-        pass
+        self.name = name
+        self.secrets = secrets
+
+    def loop(self):
+        while True:
+            if self.init_wifi():
+                self.init_mqtt()        
+                time.sleep(2)
+                if self.mqtt_client.is_connected():
+                    self.init_iic_bus()
+                    self.init_particulate_sensor()
+                    self.init_co2_sensor()
+                    while self.mqtt_client.is_connected():
+                        self.mqtt_client.loop()
+                        self.mqtt_client.ping()
+
+    
+    def log(self,message):
+        print("[AirMonitor %s]\t%s"%(self.name,message))
+
+    def init_iic_bus(self):
+        self.log("Initializing i2c Bus")
+        self.i2c = busio.I2C(board.SCL, board.SDA, frequency=100000)
 
     def init_particulate_sensor(self):
+        self.log("Initializing PM25 Particle Sensor")
+        pm25 = PM25_I2C(i2c)
+
+    def init_co2_sensor(self):
+        self.log("Initializing SCD4x CO2 Sensor")
+        scd4x = adafruit_scd4x.SCD4X(i2c)
+        print("Serial number:", [hex(i) for i in scd4x.serial_number])
+        self.log("Starting Periodic Measurment")
+        scd4x.start_periodic_measurement()
+    
+    def init_wifi(self):
+        try:
+            self.log("Initializing WiFi")
+            self.log("\tConnecting to %s..." % self.secrets["ssid"])
+            wifi.radio.connectself.(secrets["ssid"], self.secrets["password"])
+            self.log("\tSuccess!")
+            self.pool = socketpool.SocketPool(wifi.radio)
+            return True
+        except ConnectionError:
+            self.log("\tFailure!")
+            return False
+
+    def init_mqtt(self):
+        self.mqtt_client = MQTT.MQTT(
+            broker=self.secrets["broker"],
+            port=self.secrets["port"],
+            socket_pool=self.pool,
+            is_ssl=False,
+        )
+        self.mqtt_client.connect()
+    
+    def get_particulate_data(self):
+        try:
+            self.log("Getting Particulate Data..")
+            self.aqdata = pm25.read()
+            self.log("\tSuccess!")
+        except RuntimeError:
+            self.log("\tUnable to read from PM25")
+
+    def get_atmosphere_data(self):
+        try:
+            if scd4x.data_ready:
+                self.publish_atmosphere_data()
+        except RuntimeError:
+            self.log("Unable to read from SCX4x")
+
+    def publish_particulate_data(self):
+        self.log("Publising Particulate Data")
+        mqtt_client = self.mqtt_client
+        aqdata = self.aqdata
+        devicename = self.name
+        mqtt_client.publish("%s/feeds/pm/stadard/10"%(devicename),
+            aqdata["pm10 standard"])
+        mqtt_client.publish("%s/feeds/pm/standard/25"%(devicename),
+            aqdata["pm25 standard"])
+        mqtt_client.publish("%s/feeds/pm/standard/100"%(devicename),
+            aqdata["pm100 standard"])
+            
+        mqtt_client.publish("%s/feeds/pm/env/10"%(devicename),
+            aqdata["pm10 env"])
+        mqtt_client.publish("%s/feeds/pm/env/25"%(devicename),
+            aqdata["pm25 env"])
+        mqtt_client.publish("%s/feeds/pm/env/100"%(devicename),
+            aqdata["pm100 env"])
+            
+        mqtt_client.publish("%s/feeds/particles/03um"%(devicename),
+            aqdata["particles 03um"])
+        mqtt_client.publish("%s/feeds/particles/05um"%(devicename),
+            aqdata["particles 05um"])
+        mqtt_client.publish("%s/feeds/particles/10um"%(devicename),
+            aqdata["particles 10um"])
+        mqtt_client.publish("%s/feeds/particles/25um"%(devicename),
+            aqdata["particles 25um"])
+        mqtt_client.publish("%s/feeds/particles/50um"%(devicename),
+            aqdata["particles 50um"])
+        mqtt_client.publish("%s/feeds/particles/100um"%(devicename),
+            aqdata["particles 100um"])
+            
+    def publish_atmosphere_data(self):
+        devicename = self.name
+        mqtt_client = self.mqtt_client
+        mqtt_client.publish("%s/feeds/env/co2"%(devicename),
+            self.scd4x.CO2)
+        mqtt_client.publish("%s/feeds/env/temp"%(devicename),
+            self.scd4x.temperature)
+        mqtt_client.publish("%s/feeds/env/humid"%(devicename),
+            self.scd4x.relative_humidity)
