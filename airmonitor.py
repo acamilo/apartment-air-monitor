@@ -37,8 +37,22 @@ class AirMonitor:
                     self.init_particulate_sensor()
                     self.init_co2_sensor()
                     while self.mqtt_client.is_connected():
-                        self.mqtt_client.loop()
-                        self.mqtt_client.ping()
+                        try:
+                            self.log("Polling Sensors..")
+                            self.mqtt_client.loop()
+                            self.mqtt_client.ping()
+                            self.get_particulate_data()
+                            self.get_atmosphere_data()
+                        except OSError:
+                            self.log("Error Sending Data")
+                            self.mqtt_client.reconnect()
+                        except MQTT.MMQTTException:
+                            self.log("MQTT Error")
+                            self.mqtt_client.reconnect()
+                            
+                        time.sleep(10)
+            else:
+                time.sleep(5) #wifi init cooldown
 
     
     def log(self,message):
@@ -50,26 +64,27 @@ class AirMonitor:
 
     def init_particulate_sensor(self):
         self.log("Initializing PM25 Particle Sensor")
-        pm25 = PM25_I2C(i2c)
+        self.pm25 = PM25_I2C(self.i2c)
 
     def init_co2_sensor(self):
         self.log("Initializing SCD4x CO2 Sensor")
-        scd4x = adafruit_scd4x.SCD4X(i2c)
-        print("Serial number:", [hex(i) for i in scd4x.serial_number])
+        self.scd4x = adafruit_scd4x.SCD4X(self.i2c)
+        print("Serial number:", [hex(i) for i in self.scd4x.serial_number])
         self.log("Starting Periodic Measurment")
-        scd4x.start_periodic_measurement()
+        self.scd4x.start_periodic_measurement()
     
     def init_wifi(self):
         try:
             self.log("Initializing WiFi")
             self.log("\tConnecting to %s..." % self.secrets["ssid"])
-            wifi.radio.connectself.(secrets["ssid"], self.secrets["password"])
+            wifi.radio.connect(secrets["ssid"], self.secrets["password"])
             self.log("\tSuccess!")
             self.pool = socketpool.SocketPool(wifi.radio)
             return True
         except ConnectionError:
             self.log("\tFailure!")
             return False
+
 
     def init_mqtt(self):
         self.mqtt_client = MQTT.MQTT(
@@ -83,15 +98,19 @@ class AirMonitor:
     def get_particulate_data(self):
         try:
             self.log("Getting Particulate Data..")
-            self.aqdata = pm25.read()
+            self.aqdata = self.pm25.read()
             self.log("\tSuccess!")
+            self.publish_particulate_data()
         except RuntimeError:
             self.log("\tUnable to read from PM25")
 
     def get_atmosphere_data(self):
         try:
-            if scd4x.data_ready:
+            self.log("Getting Atmospheric Data..")
+            if self.scd4x.data_ready:
                 self.publish_atmosphere_data()
+            else:
+                self.log("\tSensor not ready..")
         except RuntimeError:
             self.log("Unable to read from SCX4x")
 
@@ -136,3 +155,14 @@ class AirMonitor:
             self.scd4x.temperature)
         mqtt_client.publish("%s/feeds/env/humid"%(devicename),
             self.scd4x.relative_humidity)
+
+
+try:
+    from secrets import secrets
+except ImportError:
+    print("WiFi secrets are kept in secrets.py, please add them there!")
+    raise
+    
+monitor = AirMonitor(secrets)
+
+monitor.loop()
