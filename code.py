@@ -27,9 +27,16 @@ class AirMonitor:
         self.name = name
         self.secrets = secrets
 
+
+
     def loop(self):
+        self.init_status_leds()
+        self.set_animation_wakeup()
+        self.short_animation(10000)
         while True:
             if self.init_wifi():
+                self.set_animation_yeswifi()
+                self.short_animation(10000)
                 self.init_mqtt()        
                 time.sleep(2)
                 if self.mqtt_client.is_connected():
@@ -38,6 +45,8 @@ class AirMonitor:
                     self.init_co2_sensor()
                     while self.mqtt_client.is_connected():
                         try:
+                            self.set_animation_upload()
+                            self.short_animation(5000)
                             self.log("Polling Sensors..")
                             self.mqtt_client.loop()
                             self.mqtt_client.ping()
@@ -52,7 +61,8 @@ class AirMonitor:
                             
                         time.sleep(10)
             else:
-                time.sleep(5) #wifi init cooldown
+                self.set_animation_nowifi()
+                self.short_animation(10000)
 
     
     def log(self,message):
@@ -154,8 +164,31 @@ class AirMonitor:
             self.scd4x.temperature)
         mqtt_client.publish("%s/feeds/env/humid"%(devicename),
             self.scd4x.relative_humidity)
+    
+    def init_status_leds(self):
+        self.pixels = neopixel.NeoPixel(board.IO6, 8, brightness=0.1, auto_write=False)
+        self.led_animation_nowifi = Comet(self.pixels, speed=0.05, color=RED, tail_length=4, bounce=True)
+        self.led_animation_wakeup = Blink(self.pixels, speed=0.5, color=JADE)
+        self.led_animation_yeswifi = Comet(self.pixels, speed=0.05, color=GREEN, tail_length=4, bounce=True)
+        self.led_animation_upload = Comet(self.pixels, speed=0.05, color=AMBER, tail_length=4, bounce=False)
 
+    def set_animation_nowifi(self):
+        self.animations = AnimationSequence(self.led_animation_nowifi, advance_interval=10, auto_clear=True)
+    
+    def set_animation_yeswifi(self):
+        self.animations = AnimationSequence(self.led_animation_yeswifi, advance_interval=10, auto_clear=True)
 
+    def set_animation_wakeup(self):
+        self.animations = AnimationSequence(self.led_animation_wakeup, advance_interval=10, auto_clear=True)
+
+    def set_animation_upload(self):
+        self.animations = AnimationSequence(self.led_animation_upload, advance_interval=10, auto_clear=True)
+
+    def short_animation(self,cycles):
+        for i in range(1,cycles):
+            self.animations.animate()
+        self.pixels.fill((0, 0, 0))
+        self.pixels.show()
 try:
     from secrets import secrets
 except ImportError:
