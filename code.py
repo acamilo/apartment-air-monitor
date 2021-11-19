@@ -46,7 +46,7 @@ class AirMonitor:
                     while self.mqtt_client.is_connected():
                         try:
                             self.set_animation_upload()
-                            self.short_animation(5000)
+                            self.short_animation(3000)
                             self.log("Polling Sensors..")
                             self.mqtt_client.loop()
                             self.mqtt_client.ping()
@@ -59,7 +59,7 @@ class AirMonitor:
                             self.log("MQTT Error")
                             self.mqtt_client.reconnect()
                             
-                        time.sleep(10)
+                        time.sleep(60)
             else:
                 self.set_animation_nowifi()
                 self.short_animation(10000)
@@ -128,7 +128,7 @@ class AirMonitor:
         mqtt_client = self.mqtt_client
         aqdata = self.aqdata
         devicename = self.name
-        mqtt_client.publish("%s/feeds/pm/stadard/10"%(devicename),
+        mqtt_client.publish("%s/feeds/pm/standard/10"%(devicename),
             aqdata["pm10 standard"])
         mqtt_client.publish("%s/feeds/pm/standard/25"%(devicename),
             aqdata["pm25 standard"])
