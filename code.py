@@ -69,7 +69,6 @@ class AirMonitor:
     def init_co2_sensor(self):
         self.log("Initializing SCD4x CO2 Sensor")
         self.scd4x = adafruit_scd4x.SCD4X(self.i2c)
-        print("Serial number:", [hex(i) for i in self.scd4x.serial_number])
         self.log("Starting Periodic Measurment")
         self.scd4x.start_periodic_measurement()
     
