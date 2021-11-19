@@ -23,48 +23,76 @@ class AirMonitor:
     name = None
     i2c = None
     pm25 = None
+    connected = False
     def __init__(self,secrets,name="ESP32"):
         self.name = name
         self.secrets = secrets
+        try:
+            self.init_status_leds()
+            self.init_iic_bus()
+            self.init_particulate_sensor()
+            self.init_co2_sensor()
+            self.connected = self.connect_network()
+        except:
+            self.log("Unable to initialise!")
+            self.set_animation_wakeup_error()
+            self.short_animation(5000)
+            self.log(" Rebooting!")
+            supervisor.reload() 
+        self.set_animation_wakeup()
+        self.short_animation(5000)
+        return
 
+    def connect_network(self):
+        self.set_animation_wifi_connect()
+        self.short_animation(5000)
+        if self.init_wifi():
+                self.set_animation_yeswifi()
+                self.short_animation(5000)
+                self.connect_mqtt()
+                return True
+        else:
+                self.set_animation_nowifi()
+                self.short_animation(5000)
+                return False
 
+    def connect_mqtt(self):
+        if not self.mqtt_client.is_connected():
+            self.init_mqtt()
 
     def loop(self):
-        self.init_status_leds()
-        self.set_animation_wakeup()
-        self.short_animation(10000)
-        while True:
-            if self.init_wifi():
-                self.set_animation_yeswifi()
-                self.short_animation(10000)
-                self.init_mqtt()        
-                time.sleep(2)
-                if self.mqtt_client.is_connected():
-                    self.init_iic_bus()
-                    self.init_particulate_sensor()
-                    self.init_co2_sensor()
-                    while self.mqtt_client.is_connected():
-                        try:
-                            self.set_animation_upload()
-                            self.short_animation(3000)
-                            self.log("Polling Sensors..")
-                            self.mqtt_client.loop()
-                            self.mqtt_client.ping()
-                            self.get_particulate_data()
-                            self.get_atmosphere_data()
-                        except OSError:
-                            self.log("Error Sending Data")
-                            self.mqtt_client.reconnect()
-                        except MQTT.MMQTTException:
-                            self.log("MQTT Error")
-                            self.mqtt_client.reconnect()
-                            
-                        time.sleep(60)
-            else:
-                self.set_animation_nowifi()
-                self.short_animation(10000)
+        try:
+            self.mqtt_client.loop()
+            self.mqtt_client.ping()
+            self.log("Polling Sensors..")
+            self.get_particulate_data()
+            self.get_atmosphere_data()
+            self.calculate_air_quality()
+            self.upload_sensor_data()
+        except:
+            self.log("Unhandled Exception, Rebooting")
 
-    
+    def calculate_air_quality(self):
+        pass
+
+    def upload_sensor_data(self):
+        if self.new_pm or self.new_atmo:
+            self.set_animation_upload()
+            self.short_animation(3000)
+        try:
+            if self.new_pm:
+                self.publish_particulate_data()
+                self.new_pm=False
+            if self.new_atmo:
+                self.publish_atmosphere_data()
+                self.new_atmo=False
+        except OSError:
+            self.log("Error Sending Data")
+            self.mqtt_client.reconnect()
+        except MQTT.MMQTTException:
+            self.log("MQTT Error")
+            self.mqtt_client.reconnect()   
+
     def log(self,message):
         print("[AirMonitor %s]\t%s"%(self.name,message))
 
@@ -109,19 +137,25 @@ class AirMonitor:
             self.log("Getting Particulate Data..")
             self.aqdata = self.pm25.read()
             self.log("\tSuccess!")
-            self.publish_particulate_data()
+            self.new_pm=True
+            return True
         except RuntimeError:
             self.log("\tUnable to read from PM25")
+        self.new_pm=False
+        return False
 
     def get_atmosphere_data(self):
         try:
             self.log("Getting Atmospheric Data..")
             if self.scd4x.data_ready:
-                self.publish_atmosphere_data()
+                self.new_atmo=True
+                return True
             else:
                 self.log("\tSensor not ready..")
         except RuntimeError:
             self.log("Unable to read from SCX4x")
+        self.new_atmo=False
+        return False
 
     def publish_particulate_data(self):
         self.log("Publising Particulate Data")
@@ -183,7 +217,13 @@ class AirMonitor:
 
     def set_animation_upload(self):
         self.animations = AnimationSequence(self.led_animation_upload, advance_interval=10, auto_clear=True)
+        
+    def set_animation_wakeup_error(self):
+        pass
 
+    def set_animation_wifi_connect(self):
+        pass
+    
     def short_animation(self,cycles):
         for i in range(1,cycles):
             self.animations.animate()
