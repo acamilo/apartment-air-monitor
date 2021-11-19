@@ -1,4 +1,3 @@
-print("Sensor is awake!\nLoading Libraries...")
 import time
 import supervisor
 import ssl
@@ -18,93 +17,108 @@ from adafruit_led_animation.sequence import AnimationSequence
 
 import adafruit_scd4x
 
-pixels = neopixel.NeoPixel(board.IO6, 8, brightness=0.5, auto_write=False)
-blink = Blink(pixels, speed=0.5, color=JADE)
-chase = Chase(pixels, speed=0.1, size=6, spacing=2, color=GREEN)
-comet = Comet(pixels, speed=0.05, color=PURPLE, tail_length=4, bounce=True)
 
+class AirMonitor:
+    secrets = None
+    name = None
+    i2c = None
+    pm25 = None
+    def __init__(self,secrets,name="ESP32"):
+        self.name = name
+        self.secrets = secrets
 
-wifi_error = Comet(pixels, speed=0.05, color=RED, tail_length=4, bounce=True)
+    def loop(self):
+        while True:
+            if self.init_wifi():
+                self.init_mqtt()        
+                time.sleep(2)
+                if self.mqtt_client.is_connected():
+                    self.init_iic_bus()
+                    self.init_particulate_sensor()
+                    self.init_co2_sensor()
+                    while self.mqtt_client.is_connected():
+                        try:
+                            self.log("Polling Sensors..")
+                            self.mqtt_client.loop()
+                            self.mqtt_client.ping()
+                            self.get_particulate_data()
+                            self.get_atmosphere_data()
+                        except OSError:
+                            self.log("Error Sending Data")
+                            self.mqtt_client.reconnect()
+                        except MQTT.MMQTTException:
+                            self.log("MQTT Error")
+                            self.mqtt_client.reconnect()
+                            
+                        time.sleep(10)
+            else:
+                time.sleep(5) #wifi init cooldown
 
-wifi_conn = Chase(pixels, speed=0.1, size=6, spacing=2, color=GREEN)
     
-try:
-    from secrets import secrets
-except ImportError:
-    print("WiFi secrets are kept in secrets.py, please add them there!")
-    raise
+    def log(self,message):
+        print("[AirMonitor %s]\t%s"%(self.name,message))
 
-try:    
-    print("Connecting to %s" % secrets["ssid"])
-    wifi.radio.connect(secrets["ssid"], secrets["password"])
-    print("Connected to %s!" % secrets["ssid"])
-except ConnectionError:
-    animations = AnimationSequence(wifi_error, advance_interval=10, auto_clear=True)
-    for i in range(1,50000):
-        animations.animate()
-        
-    supervisor.reload()
+    def init_iic_bus(self):
+        self.log("Initializing i2c Bus")
+        self.i2c = busio.I2C(board.SCL, board.SDA, frequency=100000)
 
-# Define callback methods which are called when events occur
-# pylint: disable=unused-argument, redefined-outer-name
-def connected(client, userdata, flags, rc):
-    # This function will be called when the client is connected
-    # successfully to the broker.
-    print("Connected to MQTT Broker!\n\tClient:\t%s\n\tuserdata:\t%s\n\tflags:\t%s\n\trc:\t%s" % (client,userdata,flags,rc))
+    def init_particulate_sensor(self):
+        self.log("Initializing PM25 Particle Sensor")
+        self.pm25 = PM25_I2C(self.i2c)
 
-
-
-def disconnected(client, userdata, rc):
-    # This method is called when the client is disconnected
-    print("Disconnected from MQTT Broker!")
-
-
-def message(client, topic, message):
-    # This method is called when a topic the client is subscribed to
-    # has a new message.
-    print("New message on topic {0}: {1}".format(topic, message))
+    def init_co2_sensor(self):
+        self.log("Initializing SCD4x CO2 Sensor")
+        self.scd4x = adafruit_scd4x.SCD4X(self.i2c)
+        print("Serial number:", [hex(i) for i in self.scd4x.serial_number])
+        self.log("Starting Periodic Measurment")
+        self.scd4x.start_periodic_measurement()
     
-# Create a socket pool
-pool = socketpool.SocketPool(wifi.radio)
+    def init_wifi(self):
+        try:
+            self.log("Initializing WiFi")
+            self.log("\tConnecting to %s..." % self.secrets["ssid"])
+            wifi.radio.connect(secrets["ssid"], self.secrets["password"])
+            self.log("\tSuccess!")
+            self.pool = socketpool.SocketPool(wifi.radio)
+            return True
+        except ConnectionError:
+            self.log("\tFailure!")
+            return False
 
-mqtt_client = MQTT.MQTT(
-    broker=secrets["broker"],
-    port=secrets["port"],
-    socket_pool=pool,
-    is_ssl=False,
+
+    def init_mqtt(self):
+        self.mqtt_client = MQTT.MQTT(
+            broker=self.secrets["broker"],
+            port=self.secrets["port"],
+            socket_pool=self.pool,
+            is_ssl=False,
+        )
+        self.mqtt_client.connect()
     
-)
+    def get_particulate_data(self):
+        try:
+            self.log("Getting Particulate Data..")
+            self.aqdata = self.pm25.read()
+            self.log("\tSuccess!")
+            self.publish_particulate_data()
+        except RuntimeError:
+            self.log("\tUnable to read from PM25")
 
-# Setup the callback methods above
-mqtt_client.on_connect = connected
-mqtt_client.on_disconnect = disconnected
-mqtt_client.on_message = message
+    def get_atmosphere_data(self):
+        try:
+            self.log("Getting Atmospheric Data..")
+            if self.scd4x.data_ready:
+                self.publish_atmosphere_data()
+            else:
+                self.log("\tSensor not ready..")
+        except RuntimeError:
+            self.log("Unable to read from SCX4x")
 
-# Connect the client to the MQTT broker.
-print("Connecting to MQTT Broker...")
-mqtt_client.connect()
-
-print("PM25 Init")
-i2c = busio.I2C(board.SCL, board.SDA, frequency=100000)
-pm25 = PM25_I2C(i2c, reset_pin)
-
-print("SCD4x Init")
-scd4x = adafruit_scd4x.SCD4X(i2c)
-print("Serial number:", [hex(i) for i in scd4x.serial_number])
-scd4x.start_periodic_measurement()
-
-device_name="esp32"
-
-time.sleep(1)
-i=0
-while True:
-    animations.animate()
-    mqtt_client.loop()
-    # Collect C02
-    
-    # Collect particles
-    try:
-        aqdata = pm25.read()
+    def publish_particulate_data(self):
+        self.log("Publising Particulate Data")
+        mqtt_client = self.mqtt_client
+        aqdata = self.aqdata
+        devicename = self.name
         mqtt_client.publish("%s/feeds/pm/stadard/10"%(devicename),
             aqdata["pm10 standard"])
         mqtt_client.publish("%s/feeds/pm/standard/25"%(devicename),
@@ -131,20 +145,24 @@ while True:
             aqdata["particles 50um"])
         mqtt_client.publish("%s/feeds/particles/100um"%(devicename),
             aqdata["particles 100um"])
-    except RuntimeError:
-        print("Unable to read from PM25")
-        
-    try:
-        if scd4x.data_ready:
-            mqtt_client.publish("%s/feeds/env/co2"%(devicename),
-                scd4x.CO2)
-            mqtt_client.publish("%s/feeds/env/temp"%(devicename),
-                scd4x.temperature)
-            mqtt_client.publish("%s/feeds/env/humid"%(devicename),
-                scd4x.relative_humidity)
-    except RuntimeError:
-        print("Unable to read from SCX4x")
+            
+    def publish_atmosphere_data(self):
+        devicename = self.name
+        mqtt_client = self.mqtt_client
+        mqtt_client.publish("%s/feeds/env/co2"%(devicename),
+            self.scd4x.CO2)
+        mqtt_client.publish("%s/feeds/env/temp"%(devicename),
+            self.scd4x.temperature)
+        mqtt_client.publish("%s/feeds/env/humid"%(devicename),
+            self.scd4x.relative_humidity)
+
+
+try:
+    from secrets import secrets
+except ImportError:
+    print("WiFi secrets are kept in secrets.py, please add them there!")
+    raise
     
-    mqtt_client.publish("esp32/feeds/test",i)
-    i=i+1
-    time.sleep(5)
+monitor = AirMonitor(secrets)
+
+monitor.loop()
