@@ -179,6 +179,7 @@ class AirMonitor:
 
     def get_voc_Data(self):
         try:
+            print(self.sgp30.iaq_measure())
             self.sgp_eCO2, self.sgp_TVOC = self.sgp30.iaq_measure()
             self.new_voc = True
         except RuntimeError:
