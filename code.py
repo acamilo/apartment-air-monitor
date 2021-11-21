@@ -9,11 +9,13 @@ import neopixel
 import busio
 from digitalio import DigitalInOut, Direction, Pull
 from adafruit_pm25.i2c import PM25_I2C
+import adafruit_sgp30
 from adafruit_led_animation.animation.blink import Blink
 from adafruit_led_animation.animation.comet import Comet
 from adafruit_led_animation.animation.chase import Chase
-from adafruit_led_animation.color import PURPLE, AMBER, JADE, RED, GREEN
-from adafruit_led_animation.sequence import AnimationSequence
+from adafruit_led_animation.animation.pulse import Pulse
+from adafruit_led_animation.color import PURPLE, AMBER, JADE, RED, GREEN,WHITE,MAGENTA
+from adafruit_led_animation.sequence import AnimationSequence, AnimateOnce
 
 import adafruit_scd4x
 
@@ -28,19 +30,23 @@ class AirMonitor:
         self.name = name
         self.secrets = secrets
         self.init_status_leds()
-        self.set_animation_wakeup()
+        
+        #while True:
+        #    self.short_animation(8000,self.led_animation_nowifi)
+        #    time.sleep(3)
+            
+        self.short_animation(8000,self.led_animation_wakeup)
         try:
             
             self.init_iic_bus()
             self.init_co2_sensor()
             self.init_particulate_sensor()
+            self.init_voc_sensor()
             self.connected = self.connect_network()
-            self.set_animation_wakeup()
-            self.short_animation(5000)
+            self.short_animation(5000,self.led_animation_wakeup)
         except Exception as e:
             self.log("Unable to initialise! %s"%(e))
-            self.set_animation_wakeup_error()
-            self.short_animation(5000)
+            self.short_animation(5000,self.led_animation_wakeup_error)
             time.sleep(10)
             self.log(" Rebooting!")
             #supervisor.reload()
@@ -48,17 +54,14 @@ class AirMonitor:
         return
 
     def connect_network(self):
-        self.set_animation_wifi_connect()
-        self.short_animation(5000)
+        self.short_animation(5000,self.led_animation_wifi_connect)
         if self.init_wifi():
-                self.set_animation_yeswifi()
-                self.short_animation(5000)
+                self.short_animation(5000,self.led_animation_yeswifi)
                 self.init_mqtt()
                 self.connect_mqtt()
                 return True
         else:
-                self.set_animation_nowifi()
-                self.short_animation(5000)
+                self.short_animation(5000,self.led_animation_nowifi)
                 return False
 
     def connect_mqtt(self):
@@ -71,13 +74,13 @@ class AirMonitor:
             self.log("Polling Sensors..")
             self.get_particulate_data()
             self.get_atmosphere_data()
+            self.get_voc_Data()
             self.calculate_air_quality()
             self.upload_sensor_data()
             self.led_quality()
-            time.sleep(30)
+            time.sleep(10)
         except Exception as e:
-            self.set_animation_nowifi()
-            self.short_animation(2000)
+            self.short_animation(2000,self.led_animation_nowifi)
             self.log("Unhandled Exception %s\n Rebooting"%(e))
             supervisor.reload()
 
@@ -85,9 +88,8 @@ class AirMonitor:
         pass
 
     def upload_sensor_data(self):
-        if self.new_pm or self.new_atmo:
-            self.set_animation_upload()
-            self.short_animation(3000)
+        if self.new_pm or self.new_atmo or self.new_voc:
+            self.short_animation(3000,self.led_animation_upload)
         try:
             if self.new_pm:
                 self.publish_particulate_data()
@@ -95,14 +97,15 @@ class AirMonitor:
             if self.new_atmo:
                 self.publish_atmosphere_data()
                 self.new_atmo=False
+            if self.new_voc:
+                self.publish_voc_data()
+                self.new_voc = False
         except OSError:
-            self.set_animation_nowifi()
-            self.short_animation(2000)
+            self.short_animation(2000,self.led_animation_comms_error)
             self.log("Error Sending Data")
             self.mqtt_client.reconnect()
         except MQTT.MMQTTException:
-            self.set_animation_nowifi()
-            self.short_animation(2000)
+            self.short_animation(2000,self.led_animation_comms_error)
             self.log("MQTT Error")
             self.mqtt_client.reconnect()
 
@@ -120,8 +123,12 @@ class AirMonitor:
     def init_co2_sensor(self):
         self.log("Initializing SCD4x CO2 Sensor")
         self.scd4x = adafruit_scd4x.SCD4X(self.i2c)
-        self.log("Starting Periodic Measurment")
+        #self.log("Starting Periodic Measurment")
         self.scd4x.start_periodic_measurement()
+
+    def init_voc_sensor(self):
+        self.log("Initializing SGP30 VOC Sensor")
+        self.sgp30 = adafruit_sgp30.Adafruit_SGP30(self.i2c)
 
     def init_wifi(self):
         try:
@@ -170,6 +177,13 @@ class AirMonitor:
         self.new_atmo=False
         return False
 
+    def get_voc_Data(self):
+        try:
+            self.sgp_eCO2, self.sgp_TVOC = self.sgp30.iaq_measure()
+            self.new_voc = True
+        except RuntimeError:
+            self.log("Unable to read from SGP30")
+        
     def publish_particulate_data(self):
         self.log("Publising Particulate Data")
         mqtt_client = self.mqtt_client
@@ -203,6 +217,7 @@ class AirMonitor:
             aqdata["particles 100um"])
 
     def publish_atmosphere_data(self):
+        self.log("Publising Atmospheric Data")
         devicename = self.name
         mqtt_client = self.mqtt_client
         mqtt_client.publish("%s/feeds/env/co2"%(devicename),
@@ -212,41 +227,33 @@ class AirMonitor:
         mqtt_client.publish("%s/feeds/env/humid"%(devicename),
             self.scd4x.relative_humidity)
 
+    def publish_voc_data(self):
+        self.log("Publising Volatile Organic Compound Data")
+        devicename = self.name
+        mqtt_client = self.mqtt_client
+        mqtt_client.publish("%s/feeds/env/eco2"%(devicename),
+            self.sgp_eCO2)
+        mqtt_client.publish("%s/feeds/env/tvoc"%(devicename),
+            self.sgp_TVOC)
+
     def init_status_leds(self):
-        self.pixels = neopixel.NeoPixel(board.IO6, 8, brightness=0.1, auto_write=False)
-        self.led_animation_nowifi = Comet(self.pixels, speed=0.05, color=RED, tail_length=4, bounce=True)
-        self.led_animation_wakeup = Blink(self.pixels, speed=0.5, color=JADE)
-        self.led_animation_wakeup_error = Blink(self.pixels, speed=0.2, color=RED)
-        self.led_animation_yeswifi = Comet(self.pixels, speed=0.05, color=GREEN, tail_length=4, bounce=True)
-        self.led_animation_upload = Comet(self.pixels, speed=0.05, color=AMBER, tail_length=4, bounce=False)
-        self.led_animation_comms_error = Comet(self.pixels, speed=0.01, color=RED, tail_length=4, bounce=False)
+        self.pixels = neopixel.NeoPixel(board.IO6, 8, brightness=1, auto_write=False)
+        self.led_animation_nowifi = Pulse(self.pixels,speed=0.0001,color=RED)
+        self.led_animation_wakeup = Pulse(self.pixels, speed=0.005, color=WHITE)
+        self.led_animation_wakeup_error = Pulse(self.pixels,speed=0.0001,color=RED)
+        self.led_animation_yeswifi = Pulse(self.pixels,speed=0.0001,color=GREEN)
+        self.led_animation_wifi_connect = Comet(self.pixels, speed=0.05, color=WHITE, tail_length=4, bounce=True)
+        self.led_animation_upload = Comet(self.pixels, speed=0.07, color=AMBER, tail_length=4, bounce=False)
+        self.led_animation_comms_error = Pulse(self.pixels,0.0001,color=MAGENTA)
 
-    def set_animation_nowifi(self):
-        self.animations = AnimationSequence(self.led_animation_nowifi, advance_interval=10, auto_clear=True)
 
-    def set_animation_yeswifi(self):
-        self.animations = AnimationSequence(self.led_animation_yeswifi, advance_interval=10, auto_clear=True)
-
-    def set_animation_wakeup(self):
-        self.animations = AnimationSequence(self.led_animation_wakeup, advance_interval=10, auto_clear=True)
-
-    def set_animation_upload(self):
-        self.animations = AnimationSequence(self.led_animation_upload, advance_interval=10, auto_clear=True)
-        
-    def set_animation_comms_error(self):
-        self.animations = AnimationSequence(self.led_animation_comms_error, advance_interval=10, auto_clear=True)
-
-    def set_animation_wakeup_error(self):
-        pass
-
-    def set_animation_wifi_connect(self):
-        pass
 
     def led_quality(self):
         self.pixels.fill((0, 100, 0))
         self.pixels.show()
 
-    def short_animation(self,cycles):
+    def short_animation(self,cycles,animaton):
+        self.animations = AnimateOnce(animaton,auto_clear=True)
         for i in range(1,cycles):
             self.animations.animate()
         self.pixels.fill((0, 0, 0))
