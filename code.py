@@ -7,6 +7,7 @@ import adafruit_minimqtt.adafruit_minimqtt as MQTT
 import board
 import neopixel
 import busio
+import math
 from digitalio import DigitalInOut, Direction, Pull
 from adafruit_pm25.i2c import PM25_I2C
 import adafruit_sgp30
@@ -44,6 +45,7 @@ class AirMonitor:
             self.init_voc_sensor()
             self.connected = self.connect_network()
             self.short_animation(5000,self.led_animation_wakeup)
+            self.calibrate_voc_sensor()
         except Exception as e:
             self.log("Unable to initialise! %s"%(e))
             self.short_animation(5000,self.led_animation_wakeup_error)
@@ -52,6 +54,13 @@ class AirMonitor:
             #supervisor.reload()
 
         return
+
+    def calibrate_voc_sensor(self):
+        rh = self.scd4x.relative_humidity
+        T = self.scd4x.temperature
+        self.log("Calibrating VOC with RH: %s and T: %s"%(rh,T))
+        self.sgp30.set_iaq_humidity(self.rel_to_abs_humidity(rh,T))
+
 
     def connect_network(self):
         self.short_animation(5000,self.led_animation_wifi_connect)
@@ -129,6 +138,7 @@ class AirMonitor:
     def init_voc_sensor(self):
         self.log("Initializing SGP30 VOC Sensor")
         self.sgp30 = adafruit_sgp30.Adafruit_SGP30(self.i2c)
+        
 
     def init_wifi(self):
         try:
@@ -179,7 +189,6 @@ class AirMonitor:
 
     def get_voc_Data(self):
         try:
-            print(self.sgp30.iaq_measure())
             self.sgp_eCO2, self.sgp_TVOC = self.sgp30.iaq_measure()
             self.new_voc = True
         except RuntimeError:
@@ -247,7 +256,8 @@ class AirMonitor:
         self.led_animation_upload = Comet(self.pixels, speed=0.07, color=AMBER, tail_length=4, bounce=False)
         self.led_animation_comms_error = Pulse(self.pixels,0.0001,color=MAGENTA)
 
-
+    def rel_to_abs_humidity(self,rh,T):
+        return ( 6.112*math.exp((17.67*T)/(T+243.5) )*rh*2.1674 )/(273.15+T)
 
     def led_quality(self):
         self.pixels.fill((0, 100, 0))
