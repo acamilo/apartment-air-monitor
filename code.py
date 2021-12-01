@@ -20,6 +20,28 @@ from adafruit_led_animation.sequence import AnimationSequence, AnimateOnce
 
 import adafruit_scd4x
 
+DATABASE = "floor3apt"
+ROOM = "livingroom"
+PARTICULATE_TOPIC_PM_STANDARD_10 = f"{DATABASE}/{ROOM}/pm_standard_10"
+PARTICULATE_TOPIC_PM_STANDARD_25 = f"{DATABASE}/{ROOM}/pm_standard_25"
+PARTICULATE_TOPIC_PM_STANDARD_100 = f"{DATABASE}/{ROOM}/pm_standard_100"
+PARTICULATE_TOPIC_PM_ENVIRONMENT_10 = f"{DATABASE}/{ROOM}/pm_environment_10"
+PARTICULATE_TOPIC_PM_ENVIRONMENT_25 = f"{DATABASE}/{ROOM}/pm_environment_25"
+PARTICULATE_TOPIC_PM_ENVIRONMENT_100 = f"{DATABASE}/{ROOM}/pm_environment_100"
+PARTICULATE_TOPIC_PARTICLES_03UM = f"{DATABASE}/{ROOM}/pm_particles_0_3um"
+PARTICULATE_TOPIC_PARTICLES_05UM = f"{DATABASE}/{ROOM}/pm_particles_0_5um" 
+PARTICULATE_TOPIC_PARTICLES_10UM = f"{DATABASE}/{ROOM}/pm_particles_1_0um"
+PARTICULATE_TOPIC_PARTICLES_25UM = f"{DATABASE}/{ROOM}/pm_particles_2_5um"
+PARTICULATE_TOPIC_PARTICLES_50UM = f"{DATABASE}/{ROOM}/pm_particles_5_0um"
+PARTICULATE_TOPIC_PARTICLES_100UM = f"{DATABASE}/{ROOM}/pm_particles_10_0um"
+
+ATMOSPHERE_TOPIC_CO2 = f"{DATABASE}/{ROOM}/am_co2_ppm"
+ATMOSPHERE_TOPIC_TEMPERATURE = f"{DATABASE}/{ROOM}/am_temp_degc"
+ATMOSPHERE_TOPIC_HUMIDITY = f"{DATABASE}/{ROOM}/am_humid_rel"
+
+
+ATMOSPHERE_TOPIC_ECO2 = f"{DATABASE}/{ROOM}/am_eco2_ppm"
+ATMOSPHERE_TOPIC_TVOC = f"{DATABASE}/{ROOM}/am_tvoc_ppm"
 
 class AirMonitor:
     secrets = None
@@ -31,14 +53,14 @@ class AirMonitor:
         self.name = name
         self.secrets = secrets
         self.init_status_leds()
-        
+
         #while True:
         #    self.short_animation(8000,self.led_animation_nowifi)
         #    time.sleep(3)
-            
+
         self.short_animation(8000,self.led_animation_wakeup)
         try:
-            
+
             self.init_iic_bus()
             self.init_co2_sensor()
             self.init_particulate_sensor()
@@ -138,7 +160,7 @@ class AirMonitor:
     def init_voc_sensor(self):
         self.log("Initializing SGP30 VOC Sensor")
         self.sgp30 = adafruit_sgp30.Adafruit_SGP30(self.i2c)
-        
+
 
     def init_wifi(self):
         try:
@@ -158,6 +180,7 @@ class AirMonitor:
             broker=self.secrets["broker"],
             port=self.secrets["port"],
             socket_pool=self.pool,
+            keep_alive=300,
             is_ssl=False,
         )
 
@@ -193,57 +216,58 @@ class AirMonitor:
             self.new_voc = True
         except RuntimeError:
             self.log("Unable to read from SGP30")
-        
+
     def publish_particulate_data(self):
         self.log("Publising Particulate Data")
         mqtt_client = self.mqtt_client
         aqdata = self.aqdata
         devicename = self.name
-        mqtt_client.publish("%s/feeds/pm/standard/10"%(devicename),
+        mqtt_client.publish(PARTICULATE_TOPIC_PM_STANDARD_10,
             aqdata["pm10 standard"])
-        mqtt_client.publish("%s/feeds/pm/standard/25"%(devicename),
+        mqtt_client.publish(PARTICULATE_TOPIC_PM_STANDARD_25,
             aqdata["pm25 standard"])
-        mqtt_client.publish("%s/feeds/pm/standard/100"%(devicename),
+        mqtt_client.publish(PARTICULATE_TOPIC_PM_STANDARD_100,
             aqdata["pm100 standard"])
 
-        mqtt_client.publish("%s/feeds/pm/env/10"%(devicename),
+        mqtt_client.publish(PARTICULATE_TOPIC_PM_ENVIRONMENT_10,
             aqdata["pm10 env"])
-        mqtt_client.publish("%s/feeds/pm/env/25"%(devicename),
+        mqtt_client.publish(PARTICULATE_TOPIC_PM_ENVIRONMENT_25,
             aqdata["pm25 env"])
-        mqtt_client.publish("%s/feeds/pm/env/100"%(devicename),
+        mqtt_client.publish(PARTICULATE_TOPIC_PM_ENVIRONMENT_100,
             aqdata["pm100 env"])
 
-        mqtt_client.publish("%s/feeds/particles/03um"%(devicename),
+        mqtt_client.publish(PARTICULATE_TOPIC_PARTICLES_03UM,
             aqdata["particles 03um"])
-        mqtt_client.publish("%s/feeds/particles/05um"%(devicename),
+        mqtt_client.publish(PARTICULATE_TOPIC_PARTICLES_05UM,
             aqdata["particles 05um"])
-        mqtt_client.publish("%s/feeds/particles/10um"%(devicename),
+        mqtt_client.publish(PARTICULATE_TOPIC_PARTICLES_10UM,
             aqdata["particles 10um"])
-        mqtt_client.publish("%s/feeds/particles/25um"%(devicename),
+        mqtt_client.publish(PARTICULATE_TOPIC_PARTICLES_25UM,
             aqdata["particles 25um"])
-        mqtt_client.publish("%s/feeds/particles/50um"%(devicename),
+        mqtt_client.publish(PARTICULATE_TOPIC_PARTICLES_50UM,
             aqdata["particles 50um"])
-        mqtt_client.publish("%s/feeds/particles/100um"%(devicename),
+        mqtt_client.publish(PARTICULATE_TOPIC_PARTICLES_100UM,
             aqdata["particles 100um"])
-
+            
+            
     def publish_atmosphere_data(self):
         self.log("Publising Atmospheric Data")
         devicename = self.name
         mqtt_client = self.mqtt_client
-        mqtt_client.publish("%s/feeds/env/co2"%(devicename),
+        mqtt_client.publish(ATMOSPHERE_TOPIC_CO2,
             self.scd4x.CO2)
-        mqtt_client.publish("%s/feeds/env/temp"%(devicename),
+        mqtt_client.publish(ATMOSPHERE_TOPIC_TEMPERATURE,
             self.scd4x.temperature)
-        mqtt_client.publish("%s/feeds/env/humid"%(devicename),
+        mqtt_client.publish(ATMOSPHERE_TOPIC_HUMIDITY,
             self.scd4x.relative_humidity)
 
     def publish_voc_data(self):
         self.log("Publising Volatile Organic Compound Data")
         devicename = self.name
         mqtt_client = self.mqtt_client
-        mqtt_client.publish("%s/feeds/env/eco2"%(devicename),
+        mqtt_client.publish(ATMOSPHERE_TOPIC_ECO2,
             self.sgp_eCO2)
-        mqtt_client.publish("%s/feeds/env/tvoc"%(devicename),
+        mqtt_client.publish(ATMOSPHERE_TOPIC_TVOC,
             self.sgp_TVOC)
 
     def init_status_leds(self):
